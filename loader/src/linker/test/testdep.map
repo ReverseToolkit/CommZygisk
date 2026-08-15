@@ -1,0 +1,28 @@
+DEP_1.0 {
+  global:
+    ctor_log;
+    ctor_log_append;
+    dep_add;
+    dep_get;
+    dep_set;
+    dep_bss_ok;
+    dep_tls;
+    dep_tls_set;
+    dep_tls_x;
+    dep_glob;
+    dep_ifunc_local;
+    dep_ifunc_slot;
+    dep_table_sum;
+    dep_f0; dep_f1; dep_f2; dep_f3; dep_f4; dep_f5; dep_f6; dep_f7;
+    dep_f8; dep_f9; dep_f10; dep_f11; dep_f12; dep_f13; dep_f14; dep_f15;
+    dep_f16; dep_f17; dep_f18; dep_f19; dep_f20; dep_f21; dep_f22; dep_f23;
+    dep_f24; dep_f25; dep_f26; dep_f27; dep_f28; dep_f29; dep_f30; dep_f31;
+  local:
+    *;
+};
+
+DEP_2.0 {
+  global:
+    dep_mul;
+    dep_ifunc;
+} DEP_1.0;

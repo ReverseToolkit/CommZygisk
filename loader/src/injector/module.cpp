@@ -1,6 +1,5 @@
 #include "module.hpp"
 
-#include <android/dlext.h>
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -103,7 +102,7 @@ void ZygiskModule::setOption(zygisk::Option opt) {
 
 uint32_t ZygiskModule::getFlags() { return g_ctx ? (g_ctx->info_flags & ~PRIVATE_MASK) : 0; }
 
-bool ZygiskModule::tryUnload() const { return unload && dlclose(handle) == 0; }
+bool ZygiskModule::tryUnload() const { return unload && Dlclose(handle) == 0; }
 
 // -----------------------------------------------------------------
 
@@ -292,7 +291,7 @@ void ZygiskContext::run_modules_pre() {
     for (size_t i = 0; i < size; i++) {
         auto &m = ms[i];
         if (void *handle = DlopenMem(m.memfd, RTLD_NOW);
-            void *entry = handle ? dlsym(handle, "zygisk_module_entry") : nullptr) {
+            void *entry = handle ? Dlsym(handle, "zygisk_module_entry") : nullptr) {
             modules.emplace_back(i, handle, entry);
         }
     }
