@@ -1,5 +1,6 @@
 #include "module.hpp"
 
+#include <cstring>
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -364,6 +365,15 @@ void ZygiskContext::app_specialize_pre() {
 
     if ((info_flags & UNMOUNT_MASK) == UNMOUNT_MASK) {
         LOGV("[%s] is on the denylist", process);
+        flags |= DO_REVERT_UNMOUNT;
+    }
+
+    // Treat the WebView app-zygote as if it were on the denylist so that the isolated
+    // processes it forks share the same clean mount namespace as every other isolated
+    // process. The app-zygote's sandboxed children inherit its namespace directly, so
+    // routing it down the revert-unmount path is what keeps the mount view uniform
+    // across all isolated processes.
+    if (process != nullptr && strcmp(process, "webview_zygote") == 0) {
         flags |= DO_REVERT_UNMOUNT;
     }
 
