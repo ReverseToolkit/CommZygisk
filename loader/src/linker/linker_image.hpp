@@ -118,6 +118,8 @@ struct Image {
     bool nodelete = false;
     bool global = false;
     bool bti = false;
+    // This process's linker wrote a ResolveLinkerApi pointer into this image.
+    bool bound_linker_api = false;
     int refcount = 1;
     int rtld_flags = 0;
     uint32_t dt_flags = 0;
@@ -195,6 +197,9 @@ Image* FindBySoname(const char* name);
 Image* FindByDevIno(dev_t dev, ino_t ino);
 Image* FindByAddress(const void* addr);
 void ForEachImage(void (*fn)(Image* so, void* arg), void* arg);
+// In a process whose module GOTs were bound to this DSO, point those slots
+// back at libc/libdl before unmap. Processes that never bound a slot are skipped.
+void RestoreLinkerApiBindings();
 void EnsureProcessImages();
 void RefreshProcessImages();
 bool MustUseSystemLinker(const char* name);

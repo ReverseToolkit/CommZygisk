@@ -12,6 +12,7 @@
 
 #include "android_util.hpp"
 #include "daemon.hpp"
+#include "restore_api.hpp"
 #include "module.hpp"
 #include "zygisk.hpp"
 
@@ -296,6 +297,8 @@ void HookContext::hook_unloader() {
 }
 
 void HookContext::restore_plt_hook() {
+    // Only this process's own module bindings. Unmodified processes do nothing.
+    linker::RestoreLinkerApiBindings();
     // Unhook plt_hook
     for (const auto &[dev, inode, sym, old_func] : plt_backup) {
         if (!lsplt::RegisterHook(dev, inode, sym, *old_func, nullptr)) {

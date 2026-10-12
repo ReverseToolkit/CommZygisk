@@ -1,6 +1,9 @@
 #include "linker_image.hpp"
 #include "linker_relocs.hpp"
 
+#include <dlfcn.h>
+#include <sys/mman.h>
+
 #include <cstring>
 
 namespace linker {
@@ -29,6 +32,10 @@ bool ApplyReloc(Image* so, uintptr_t offset, uint32_t type, uint32_t sym_idx, in
     } else if (raw != nullptr && name[0] != '\0') {
         if (void* api = ResolveLinkerApi(name)) {
             resolved = api;
+            if (type == R_GENERIC_JUMP_SLOT || type == R_GENERIC_GLOB_DAT ||
+                type == R_GENERIC_ABSOLUTE) {
+                so->bound_linker_api = true;
+            }
         } else {
             r = ResolveLookup(name, nullptr, so);
             if (r.sym != nullptr && ELF_ST_TYPE(r.sym->st_info) != STT_TLS) {
@@ -109,6 +116,56 @@ bool ApplyReloc(Image* so, uintptr_t offset, uint32_t type, uint32_t sym_idx, in
     default:
         SetErrorf("unsupported reloc type %u", type);
         return false;
+    }
+}
+
+void RestoreApiSlot(Image* so, uintptr_t offset, uint32_t type, uint32_t sym_idx, intptr_t addend) {
+    if (type != R_GENERIC_JUMP_SLOT && type != R_GENERIC_GLOB_DAT && type != R_GENERIC_ABSOLUTE) {
+        return;
+    }
+    if (so->dynsym == nullptr || so->dynstr == nullptr || sym_idx == 0) {
+        return;
+    }
+    const ElfW(Sym)* raw = &so->dynsym[sym_idx];
+    if (raw->st_name == 0 || (so->dynstr_size != 0 && raw->st_name >= so->dynstr_size)) {
+        return;
+    }
+    const char* name = so->dynstr + raw->st_name;
+    void* api = ResolveLinkerApi(name);
+    if (api == nullptr) {
+        return;
+    }
+    auto* place = reinterpret_cast<ElfW(Addr)*>(so->load_bias + offset);
+    const auto current = reinterpret_cast<ElfW(Addr)>(api) + static_cast<ElfW(Addr)>(addend);
+    if (*place != current) {
+        return;
+    }
+    // RTLD_NEXT skips this DSO. libzygisk.so does not export these names, so the
+    // next definition is libc/libdl, which stays mapped after we unmap ourselves.
+    void* real = dlsym(RTLD_NEXT, name);
+    if (real == nullptr || real == api) {
+        return;
+    }
+    uintptr_t page = PageStart(reinterpret_cast<uintptr_t>(place));
+    // libc mprotect, not linker::mprotect. The wrapper ORs PROT_HIDE and, on
+    // any error other than EINVAL/ENOSYS, leaves the RELRO page read-only.
+    // The following store then SIGSEGV SEGV_ACCERRs.
+    if (::mprotect(reinterpret_cast<void*>(page), PageSize(), PROT_READ | PROT_WRITE) != 0) {
+        return;
+    }
+    *place = reinterpret_cast<ElfW(Addr)>(real) + static_cast<ElfW(Addr)>(addend);
+}
+
+void RestoreApiRel(Image* so, const ElfW(Rel) * rel, size_t count) {
+    for (size_t i = 0; i < count; ++i) {
+        RestoreApiSlot(so, rel[i].r_offset, ELF_R_TYPE(rel[i].r_info), ELF_R_SYM(rel[i].r_info), 0);
+    }
+}
+
+void RestoreApiRela(Image* so, const ElfW(Rela) * rela, size_t count) {
+    for (size_t i = 0; i < count; ++i) {
+        RestoreApiSlot(so, rela[i].r_offset, ELF_R_TYPE(rela[i].r_info), ELF_R_SYM(rela[i].r_info),
+                       rela[i].r_addend);
     }
 }
 
@@ -232,6 +289,68 @@ bool RelocatePacked(Image* so, const uint8_t* data, size_t size) {
 }
 
 }  // namespace
+
+void RestoreLinkerApiBindings() {
+    ForEachImage(
+            [](Image* so, void*) {
+                // Only images this process relocated. Attached system libraries
+                // and processes that never loaded a module are left alone.
+                if (so == nullptr || !so->owns_mapping || !so->bound_linker_api ||
+                    so->dynamic == nullptr || so->load_bias == 0) {
+                    return;
+                }
+                const ElfW(Rela)* rela = nullptr;
+                size_t rela_count = 0;
+                const ElfW(Rel)* rel = nullptr;
+                size_t rel_count = 0;
+                const void* jmprel = nullptr;
+                size_t pltrel_sz = 0;
+                int pltrel_type = DT_RELA;
+                for (const ElfW(Dyn)* d = so->dynamic; d->d_tag != DT_NULL; ++d) {
+                    switch (d->d_tag) {
+                    case DT_RELA:
+                        rela = reinterpret_cast<const ElfW(Rela)*>(so->load_bias + d->d_un.d_ptr);
+                        break;
+                    case DT_RELASZ:
+                        rela_count = d->d_un.d_val / sizeof(ElfW(Rela));
+                        break;
+                    case DT_REL:
+                        rel = reinterpret_cast<const ElfW(Rel)*>(so->load_bias + d->d_un.d_ptr);
+                        break;
+                    case DT_RELSZ:
+                        rel_count = d->d_un.d_val / sizeof(ElfW(Rel));
+                        break;
+                    case DT_JMPREL:
+                        jmprel = reinterpret_cast<const void*>(so->load_bias + d->d_un.d_ptr);
+                        break;
+                    case DT_PLTRELSZ:
+                        pltrel_sz = d->d_un.d_val;
+                        break;
+                    case DT_PLTREL:
+                        pltrel_type = static_cast<int>(d->d_un.d_val);
+                        break;
+                    default:
+                        break;
+                    }
+                }
+                if (rela != nullptr && rela_count != 0) {
+                    RestoreApiRela(so, rela, rela_count);
+                }
+                if (rel != nullptr && rel_count != 0) {
+                    RestoreApiRel(so, rel, rel_count);
+                }
+                if (jmprel != nullptr && pltrel_sz != 0) {
+                    if (pltrel_type == DT_RELA) {
+                        RestoreApiRela(so, static_cast<const ElfW(Rela)*>(jmprel),
+                                       pltrel_sz / sizeof(ElfW(Rela)));
+                    } else {
+                        RestoreApiRel(so, static_cast<const ElfW(Rel)*>(jmprel),
+                                      pltrel_sz / sizeof(ElfW(Rel)));
+                    }
+                }
+            },
+            nullptr);
+}
 
 bool Relocate(Image* so) {
     UnprotectTextrel(so);
