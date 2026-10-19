@@ -166,7 +166,7 @@ DCL_HOOK_FUNC(static int, pthread_attr_setstacksize, void *target, size_t size) 
             // Because both `pthread_attr_setstacksize` and `munmap` have the same function
             // signature, we can use `musttail` to let the compiler reuse our stack frame and thus
             // `munmap` will directly return to the caller of `pthread_attr_setstacksize`.
-            LOGV("unmap libzygisk.so loaded at %p with size %zu", start_addr, block_size);
+            LOGV("[unload-audit] self-unmap libzygisk start=%p size=%zu", start_addr, block_size);
             [[clang::musttail]] return munmap(start_addr, block_size);
         }
         delete g_hook;
@@ -194,6 +194,32 @@ ZygiskContext::ZygiskContext(JNIEnv *env, void *args)
       allowed_fds(get_fd_max()),
       hook_info_lock(PTHREAD_MUTEX_INITIALIZER) {
     g_ctx = this;
+    ca_env_probe(env, "ctor");
+}
+
+// Diagnostic guard (active investigation): the specialize JNIEnv's function table
+// has been observed to point into unmapped memory by the time ~ZygiskContext runs
+// (crash in hook_jni_methods()->FindClass). Each checkpoint logs env and its
+// functions pointer so the step that corrupts it is identified. mincore() tests
+// mappedness without faulting.
+bool ca_ptr_mapped(const void *p) {
+    if (p == nullptr) return false;
+    unsigned char vec = 0;
+    uintptr_t page = reinterpret_cast<uintptr_t>(p) & ~static_cast<uintptr_t>(0xfff);
+    return mincore(reinterpret_cast<void *>(page), 4096, &vec) == 0;
+}
+
+void ca_env_probe(JNIEnv *env, const char *where) {
+    if (env == nullptr) {
+        LOGV("[ca-env] %s pid=%d env=null", where, getpid());
+        return;
+    }
+    const void *const *functions = *reinterpret_cast<const void *const *const *>(env);
+    const bool mapped = ca_ptr_mapped(functions);
+    const void *first = nullptr;
+    if (mapped) first = *functions;
+    LOGV("[ca-env] %s pid=%d env=%p functions=%p fmapped=%d f0=%p", where, getpid(),
+         (void *) env, (const void *) functions, mapped ? 1 : 0, first);
 }
 
 ZygiskContext::~ZygiskContext() {
@@ -207,6 +233,16 @@ ZygiskContext::~ZygiskContext() {
     // Strip out all API function pointers
     for (auto &m : modules) {
         m.clearApi();
+    }
+
+    ca_env_probe(env, "~ZygiskContext");
+    const void *const *functions =
+        env ? *reinterpret_cast<const void *const *const *>(env) : nullptr;
+    if (!ca_ptr_mapped(functions)) {
+        LOGE("[ca-env] ~ZygiskContext: env=%p functions=%p unmapped - skipping restore and unmap",
+             (void *) env, (const void *) functions);
+        g_hook->should_unmap = false;
+        return;
     }
 
     // Cleanup

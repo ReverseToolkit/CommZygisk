@@ -104,7 +104,10 @@ void ZygiskModule::setOption(zygisk::Option opt) {
 
 uint32_t ZygiskModule::getFlags() { return g_ctx ? (g_ctx->info_flags & ~PRIVATE_MASK) : 0; }
 
-bool ZygiskModule::tryUnload() const { return unload && Dlclose(handle) == 0; }
+bool ZygiskModule::tryUnload() const {
+    LOGV("[unload-audit] tryUnload module id=%d unload=%d handle=%p", id, unload ? 1 : 0, handle);
+    return unload && Dlclose(handle) == 0;
+}
 
 // -----------------------------------------------------------------
 
@@ -267,6 +270,8 @@ void ZygiskContext::fork_pre() {
 
     if (!is_child()) return;
 
+    ca_env_probe(env, "fork-child");
+
     // Record all open fds
     auto dir = xopen_dir("/proc/self/fd");
     for (dirent *entry; (entry = readdir(dir.get()));) {
@@ -394,11 +399,17 @@ void ZygiskContext::app_specialize_post() {
 }
 
 void ZygiskContext::server_specialize_pre() {
+    ca_env_probe(env, "srv-pre-in");
     run_modules_pre();
     zygiskd::SystemServerStarted();
+    ca_env_probe(env, "srv-pre-out");
 }
 
-void ZygiskContext::server_specialize_post() { run_modules_post(); }
+void ZygiskContext::server_specialize_post() {
+    ca_env_probe(env, "srv-post-in");
+    run_modules_post();
+    ca_env_probe(env, "srv-post-out");
+}
 
 // -----------------------------------------------------------------
 

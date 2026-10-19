@@ -1,5 +1,7 @@
 #include "linker_image.hpp"
 
+#include "logging.hpp"
+
 #include <link.h>
 #include <sys/auxv.h>
 #include <sys/ifunc.h>
@@ -586,6 +588,10 @@ void Destroy(Image* so) {
     }
     UnregisterTls(so);
     if (so->owns_mapping && so->load_start != nullptr && so->load_size != 0) {
+        LOGV("[unload-audit] Destroy name=%s base=%p size=%zu",
+             so->name.empty() ? (so->soname.empty() ? "(anon)" : so->soname.c_str())
+                              : so->name.c_str(),
+             so->load_start, so->load_size);
         munmap(so->load_start, so->load_size);
     }
     so->magic = 0;

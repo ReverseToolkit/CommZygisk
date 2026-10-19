@@ -329,6 +329,9 @@ int dlclose(void* handle) {
     if (!so->owns_mapping || so->nodelete) {
         return 0;
     }
+    LOGV("[unload-audit] dlclose name=%s refcount(before)=%u",
+         so->name.empty() ? (so->soname.empty() ? "(anon)" : so->soname.c_str()) : so->name.c_str(),
+         so->refcount);
     if (--so->refcount > 0) {
         return 0;
     }

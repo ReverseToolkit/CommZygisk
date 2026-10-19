@@ -20,6 +20,10 @@ struct mount_info {
 
 void hook_entry(void *start_addr, size_t block_size);
 
+// Diagnostic checkpoint: logs env and its functions pointer (mappedness checked
+// via mincore) so the step that corrupts the specialize JNIEnv is identified.
+void ca_env_probe(JNIEnv *env, const char *where);
+
 void hookJniNativeMethods(JNIEnv *env, const char *clz, JNINativeMethod *methods, int numMethods);
 
 void clean_libc_trace();
