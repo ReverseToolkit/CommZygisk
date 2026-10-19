@@ -1,4 +1,4 @@
-printf "Status of NeoZygisk\n\n"
+printf "Status of CommZygisk\n\n"
 
 cat @WORK_DIRECTORY@/module.prop
 

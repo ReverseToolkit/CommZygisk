@@ -109,7 +109,7 @@ fn start() {
             }
         }
         Some("version") => {
-            println!("NeoZygisk daemon {}", ZKSU_VERSION);
+            println!("CommZygisk daemon {}", ZKSU_VERSION);
         }
         Some("root") => {
             root_impl::setup();
